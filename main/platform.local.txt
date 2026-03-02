@@ -1,0 +1,2 @@
+compiler.cpp.extra_flags=-Os
+compiler.c.extra_flags=-Os

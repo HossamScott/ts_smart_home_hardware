@@ -1,0 +1,24 @@
+# PlatformIO build output
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Arduino IDE build artifacts
+build/
+*.bin
+*.elf
+*.map
+*.hex
+
+# Arduino IDE hidden folders
+.arduino15/
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
