@@ -15,7 +15,7 @@ Turn any ESP32 into a cloud-connected smart plug in **under 5 minutes**.
 Before flashing, you need a **free developer token** so we can link your
 devices to your account and show you usage insights.
 
-1. Visit **[techs-solutions.com/developer](https://techs-solutions.com/developer)**
+1. Visit **[techs-solutions.com/en/developer](https://techs-solutions.com/en/developer)**
 2. Fill in your name, company, email, and country
 3. Verify your email address
 4. Copy your **SDK_DEVELOPER_TOKEN**
@@ -374,5 +374,5 @@ Once you flash and ship the hardware, your customers:
 ## Contact & Support
 
 - **Developer support:** support@techs-solutions.com
-- **Register / developer dashboard:** [techs-solutions.com/developer](https://techs-solutions.com/developer)
+- **Register / developer dashboard:** [techs-solutions.com/en/developer](https://techs-solutions.com/en/developer)
 - **Website:** [techs-solutions.com](https://techs-solutions.com)
