@@ -611,19 +611,19 @@ void SmartPlugSDK::loop() {
         // Cloud-fail BLE phase: BLE advertises for 60s, then pauses to attempt cloud reconnect,
         // then restarts BLE. Repeats forever until cloud connects or power is removed.
         if (_cloudFailBleActive) {
-            // While BLE is advertising, still attempt WebSocket reconnection every 5s.
-            // This ensures we exit BLE recovery immediately when internet returns,
-            // rather than waiting up to 60s for the next scheduled pause window.
-            if (now - _lastWsRetry >= SDK_WS_RETRY_INTERVAL) {
-                _lastWsRetry = now;
-                _webSocket.loop();
-                if (_status.cloud_connected) {
-                    // WStype_CONNECTED already cleared _cloudFailBleActive via _onWsEvent.
-                    // Nothing more to do — fall through and let normal loop() take over.
-                    Serial.println("[Cloud-Fail] Cloud reconnected during BLE recovery — exiting BLE recovery");
-                    delay(50);
-                    return;
-                }
+            // NOTE: Do NOT call _webSocket.loop() while BLE is active — BLE consumes too much
+            // heap for TLS to work, and failed TLS attempts can corrupt WebSocket library state.
+            // Instead, wait for the 60s pause window to attempt cloud reconnection with full heap.
+
+            // If WiFi itself dropped, exit cloud-fail BLE and let WiFi recovery take over
+            if (WiFi.status() != WL_CONNECTED) {
+                Serial.println("[Cloud-Fail] WiFi lost during BLE recovery — handing off to WiFi recovery");
+                _stopBLE();
+                _cloudFailBleActive = false;
+                _cloudFailStart = 0;
+                _status.wifi_connected = false;
+                // Next tick() iteration will enter the WiFi reconnection block
+                return;
             }
 
             if (now - _reconnectStart > SDK_CLOUD_FAIL_RETRY_INTERVAL) {
@@ -639,10 +639,17 @@ void SmartPlugSDK::loop() {
                 _bleCharStatus = nullptr;
                 delay(300);
 
-                Serial.printf("[Cloud-Fail] Trying cloud for 5s (heap after deinit: %d)\n", ESP.getFreeHeap());
-                // Give WebSocket library 5 seconds of loop() calls to complete TLS handshake
+                // Reinitialize WebSocket with a fresh connection — previous state may be
+                // corrupted from running during BLE phase with insufficient heap
+                Serial.printf("[Cloud-Fail] Reinitializing cloud connection (heap after deinit: %d)\n", ESP.getFreeHeap());
+                _webSocket.disconnect();
+                delay(100);
+                _connectToCloud();
+
+                // Give WebSocket 15 seconds to complete DNS + TLS handshake + WS upgrade
+                // (5s was too short for ESP32 TLS on slow/recovering networks)
                 unsigned long tryStart = millis();
-                while (millis() - tryStart < 5000 && !_status.cloud_connected) {
+                while (millis() - tryStart < 15000 && !_status.cloud_connected) {
                     _webSocket.loop();
                     delay(50);
                 }
