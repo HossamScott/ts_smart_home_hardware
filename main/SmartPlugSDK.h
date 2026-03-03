@@ -139,6 +139,8 @@ private:
     // Cloud-fail BLE recovery (WiFi connected, cloud unreachable)
     unsigned long _cloudFailStart;     // When cloud first went down while WiFi was up (0 = not tracking)
     bool          _cloudFailBleActive; // True when BLE started due to cloud being unreachable
+    bool          _cloudFailRetrying;  // True during cloud-fail reconnect attempt (suppresses disconnect handler)
+    uint8_t       _cloudFailCycleCount; // Number of BLE recovery cycles — hard restart after too many
     unsigned long _lastWsRetry;        // Last time _webSocket.loop() was called during cloud-fail BLE recovery
 
     // BLE state
