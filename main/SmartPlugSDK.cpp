@@ -339,6 +339,29 @@ void SmartPlugSDK::begin(uint8_t ledPin) {
     Serial.println("  SmartPlug SDK");
     Serial.println("==========================================\n");
 
+    // ── Validate developer token ──────────────────────────────
+    // A valid developer token is REQUIRED for production devices.
+    // Register at techs-solutions.com/developer to get your token.
+    {
+        const char* token = SDK_DEVELOPER_TOKEN;
+        bool tokenInvalid = (!token || strlen(token) == 0 ||
+                             strcmp(token, "paste-your-token-here") == 0 ||
+                             strcmp(token, "your-developer-token-here") == 0);
+        if (tokenInvalid) {
+            Serial.println("\n!!! FATAL: Developer token not configured !!!");
+            Serial.println("Open config.h and set SDK_DEVELOPER_TOKEN to your token.");
+            Serial.println("Register at techs-solutions.com/developer to get one.");
+            Serial.println("Device will NOT start without a valid developer token.\n");
+            // Blink LED rapidly to indicate configuration error
+            pinMode(ledPin, OUTPUT);
+            while (true) {
+                digitalWrite(ledPin, HIGH); delay(100);
+                digitalWrite(ledPin, LOW);  delay(100);
+            }
+        }
+        Serial.printf("[Init] Developer Token: %.4s****\n", token);
+    }
+
     // Initialize LED
     pinMode(_ledPin, OUTPUT);
 
@@ -1195,7 +1218,18 @@ void SmartPlugSDK::_handleCloudMessage(uint8_t* payload, size_t length) {
     _status.last_cloud_contact = millis();
     const char* type = doc["type"];
 
-    if (strcmp(type, "auth_ok") == 0) {
+    if (strcmp(type, "auth_fail") == 0) {
+        const char* message = doc["message"] | "Unknown reason";
+        Serial.printf("[Cloud] !! AUTH REJECTED: %s\n", message);
+        Serial.println("[Cloud] Device cannot operate without valid authentication.");
+        Serial.println("[Cloud] Check your developer token in config.h");
+        // Halt — blink LED rapidly to signal auth failure
+        while (true) {
+            digitalWrite(_ledPin, HIGH); delay(200);
+            digitalWrite(_ledPin, LOW);  delay(200);
+        }
+    }
+    else if (strcmp(type, "auth_ok") == 0) {
         bool claimed = doc["claimed"] | false;
         _status.claimed = claimed;
 
