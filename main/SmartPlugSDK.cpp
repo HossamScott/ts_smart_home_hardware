@@ -433,6 +433,12 @@ void SmartPlugSDK::begin(uint8_t ledPin) {
         // just ensures the controller is ready for coexistence with WiFi.
         btStart();
 
+        // If unclaimed but has WiFi, check cloud first — user may have
+        // claimed via serial while device was off.
+        if (!_status.claimed) {
+            _waitingForClaim = true;
+        }
+
         _connectToWiFi();
         if (_status.wifi_connected) {
             _connectToCloud();
@@ -477,7 +483,8 @@ void SmartPlugSDK::loop() {
                 }
                 delay(500);
 
-                // Fully deinit BLE to free heap for SSL WebSocket
+                // Deinit BLE to free heap for SSL. If BLE needed again, device reboots.
+                _stopBLE();
                 BLEDevice::deinit(true);
                 _bleInitialized = false;
                 _bleServer = nullptr;
@@ -486,6 +493,7 @@ void SmartPlugSDK::loop() {
                 _bleCharStatus = nullptr;
                 delay(300);
 
+                _waitingForClaim = true;
                 _connectToCloud();
             } else {
                 Serial.println("[Setup] WiFi connection failed, restarting setup");
@@ -514,9 +522,10 @@ void SmartPlugSDK::loop() {
         return;
     }
 
-    // ── Unclaimed: alternate between BLE and Cloud ──────────
-    // BLE + SSL WebSocket can't coexist (not enough heap).
-    // Cycle: BLE on for 30s (discoverable) → BLE off, cloud on for 10s (check serial claim) → repeat
+    // ── Unclaimed: BLE discovery until paired ──────────
+    // Device stays on BLE indefinitely until user sends WiFi credentials.
+    // After WiFi provisioned, BLE is deinited and device connects to cloud for serial claim.
+    // If unclaimed again later, device reboots to get BLE back.
     if (_status.state == STATE_UNCLAIMED) {
 
         // --- Trigger: start BLE phase ---
@@ -533,7 +542,7 @@ void SmartPlugSDK::loop() {
             delay(300);
 
             _startBLEProvisioning();
-            Serial.printf("[Unclaimed] BLE advertising for 30s (heap: %d)\n", ESP.getFreeHeap());
+            Serial.printf("[Unclaimed] BLE advertising until paired (heap: %d)\n", ESP.getFreeHeap());
             return;
         }
 
@@ -573,7 +582,8 @@ void SmartPlugSDK::loop() {
                     Serial.println("[Unclaimed] WiFi connected — notified mobile via BLE");
                     delay(500); // Give mobile time to receive the notification
 
-                    // Now tear down BLE to free heap for SSL WebSocket
+                    // Fully deinit BLE to free heap for SSL WebSocket.
+                    // ESP32 can't reliably reinit BLE, so if we need BLE again we reboot.
                     _stopBLE();
                     _blePhaseActive = false;
                     BLEDevice::deinit(true);
@@ -605,37 +615,19 @@ void SmartPlugSDK::loop() {
                 return;
             }
 
-            // BLE phase lasts 30 seconds
-            if (now - _blePhaseStart < 30000) {
-                delay(50);  // Light loop, no WebSocket to service
-                return;
-            }
-
-            // 30s elapsed — switch to cloud phase
-            Serial.println("[Unclaimed] BLE phase ended — switching to cloud to check for serial claim...");
-            _stopBLE();
-            _blePhaseActive = false;
-            delay(300);
-
-            // Deinit BLE to free heap for SSL
-            BLEDevice::deinit(true);
-            _bleInitialized = false;
-            _bleServer = nullptr;
-            _bleCharSSID = nullptr;
-            _bleCharPass = nullptr;
-            _bleCharStatus = nullptr;
-            delay(200);
-
-            Serial.printf("[Unclaimed] Heap after BLE deinit: %d\n", ESP.getFreeHeap());
-            _connectToCloud();
-            // Cloud phase: loop() will run _webSocket.loop() normally.
-            // After auth_ok, if still unclaimed, _blePendingStart will be set again
-            // and cycle continues. If claimed, device enters ACTIVE mode.
+            // Stay on BLE indefinitely until user sends WiFi credentials
+            delay(50);  // Light loop, no WebSocket to service
             return;
         }
 
-        // --- Cloud phase (not in BLE phase, not pending) ---
-        // Normal WebSocket operation — falls through to code below
+        // Waiting for serial claim on cloud — let WebSocket loop run below
+        if (_waitingForClaim) {
+            // Fall through to _webSocket.loop() below
+        } else {
+            // Unclaimed but not in BLE phase and not waiting — restart BLE
+            _blePendingStart = true;
+            return;
+        }
     }
 
     // ── Safety: never call _webSocket.loop() during BLE phase ─
@@ -674,10 +666,9 @@ void SmartPlugSDK::loop() {
                     return;
                 }
 
-                // Only deinit BLE on the FIRST cycle (when it's actually running).
-                // ESP32 can't reliably reinit BLE after deinit, so we do this exactly once.
+                // Deinit BLE to free heap for SSL. If BLE needed again, device reboots.
                 if (_bleInitialized) {
-                    Serial.printf("[%lus] [Cloud-Fail] Stopping BLE to free heap for cloud retry (heap: %d, cycle: %d)\n",
+                    Serial.printf("[%lus] [Cloud-Fail] Deinit BLE to free heap for cloud retry (heap: %d, cycle: %d)\n",
                                   millis() / 1000, ESP.getFreeHeap(), _cloudFailCycleCount);
                     _stopBLE();
                     BLEDevice::deinit(true);
@@ -878,7 +869,8 @@ void SmartPlugSDK::loop() {
                 }
                 delay(500);
 
-                // Fully deinit BLE to free heap for SSL WebSocket
+                // Deinit BLE to free heap for SSL. If BLE needed again, device reboots.
+                _stopBLE();
                 BLEDevice::deinit(true);
                 _bleInitialized = false;
                 _bleServer = nullptr;
@@ -1253,10 +1245,9 @@ void SmartPlugSDK::_handleCloudMessage(uint8_t* payload, size_t length) {
                 // claim via serial number from the app. Don't cycle back to BLE.
                 Serial.println("[Cloud] Authenticated - unclaimed, staying on cloud for serial claim");
             } else {
-                Serial.println("[Cloud] Authenticated - device unclaimed, waiting for owner");
-                // Set flag so loop() starts BLE advertising phase.
-                // loop() will disconnect cloud, init BLE, advertise for 30s,
-                // then stop BLE, reconnect cloud to check if claimed via serial.
+                Serial.println("[Cloud] Authenticated - device unclaimed, entering BLE discovery");
+                // Set flag so loop() disconnects cloud and starts BLE advertising
+                // indefinitely until a user pairs via the mobile app.
                 _blePendingStart = true;
             }
         }
@@ -1438,14 +1429,14 @@ void SmartPlugSDK::_handleCloudMessage(uint8_t* payload, size_t length) {
     }
     else if (strcmp(type, "unclaimed") == 0) {
         // Owner removed this device from the app — go back to unclaimed state.
-        _status.claimed = false;
-        _status.state = STATE_UNCLAIMED;
         _prefs.begin(SDK_NVS_NAMESPACE, false);
         _prefs.putBool(SDK_NVS_KEY_CLAIMED, false);
+        _prefs.remove("wifi_ssid");
+        _prefs.remove("wifi_pass");
         _prefs.end();
-        Serial.println("[Cloud] Device unclaimed by owner — waiting for new owner");
-        // Set flag so loop() starts BLE/cloud cycling
-        _blePendingStart = true;
+        Serial.println("[Cloud] Device unclaimed by owner — rebooting into BLE discovery");
+        delay(500);
+        ESP.restart();
     }
     else if (strcmp(type, "pong") == 0) {
         // Heartbeat response

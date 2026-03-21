@@ -345,7 +345,7 @@ main/
 Once you flash and ship the hardware, your customers:
 
 1. **Download the TS Smart Home app**
-   - Android: [Google Play Store](https://play.google.com/store)
+   - Android: [Google Play Store](https://play.google.com/store/apps/details?id=com.techs_solutions.smart_home)
    - iOS: [App Store](https://apps.apple.com)
 
 2. **Power on the device** — the LED blinks fast (setup mode)
